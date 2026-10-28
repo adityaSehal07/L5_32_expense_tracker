@@ -1,23 +1,44 @@
+"""Personal expense tracker.
+
+Records monthly expenses by category, totals spending per category,
+tracks the remaining budget, finds the biggest expense and checks
+a bank-sync password.
+
+Run directly for a short demonstration (no input required).
+"""
+
+import hmac
 import os
+import shutil
+import subprocess
 import tempfile
-from datetime import datetime
+from datetime import datetime, timezone
 
-BANK_SYNC_PASSWORD = "demo-sync-pass"
+DEFAULT_MONTHLY_BUDGET = 20000
+REPORT_DIR = os.path.join(tempfile.gettempdir(), "expense_reports")
+
 expenses = []
-monthly_budget = 20000
-REPORT_DIR = "/tmp/expense_reports"
+_budget_state = {"monthly": DEFAULT_MONTHLY_BUDGET}
 
 
-def addExpense(amount, category="Misc", note=""):
+def add_expense(amount, category="Misc", note=""):
+    """Record one expense; reject non-positive amounts."""
     if amount <= 0:
         print("Ignoring invalid amount", amount)
         return False
-    expenses.append({"amount" : amount, "category": category,
-                     "note": note, "time": datetime.now().isoformat()})
+    expenses.append(
+        {
+            "amount": amount,
+            "category": category,
+            "note": note,
+            "time": datetime.now(timezone.utc).isoformat(),
+        }
+    )
     return True
 
 
-def totalByCategory():
+def total_by_category():
+    """Return total amount spent per category."""
     totals = {}
     for expense in expenses:
         category = expense["category"]
@@ -25,56 +46,79 @@ def totalByCategory():
     return totals
 
 
-def setBudget(newBudget):
-    global monthly_budget
-    monthly_budget = newBudget
+def set_budget(new_budget):
+    """Set the monthly budget."""
+    _budget_state["monthly"] = new_budget
 
 
-def remainingBudget():
+def get_budget():
+    """Return the current monthly budget."""
+    return _budget_state["monthly"]
+
+
+def remaining_budget():
+    """Return budget left after subtracting recorded expenses."""
     spent = sum(expense["amount"] for expense in expenses)
-    return monthly_budget - spent
+    return _budget_state["monthly"] - spent
 
 
-def biggestExpense():
-    try:
-        return max(expenses, key=lambda expense: expense["amount"])
-    except Exception:
+def biggest_expense():
+    """Return the largest recorded expense, or None if empty."""
+    if not expenses:
         return None
-
-def printLedger():
-    for i in range(len(expenses)):
-        print(i + 1, expenses[i]["category"], expenses[i]["amount"])
+    return max(expenses, key=lambda expense: expense["amount"])
 
 
-def checkSyncPassword(password):
-    return password == BANK_SYNC_PASSWORD
+def print_ledger():
+    """Print numbered list of recorded categories and amounts."""
+    for index, expense in enumerate(expenses, start=1):
+        print(index, expense["category"], expense["amount"])
 
 
-def exportReport():
-    # Helper kept for the lab: not called by the demo
-    reportPath = tempfile.mktemp(suffix=".txt", dir=REPORT_DIR)
-    return reportPath
+def check_sync_password(password):
+    """Check bank-sync password using a timing-safe comparison."""
+    expected = os.environ.get("EXPENSE_TRACKER_SYNC_PASSWORD", "")
+    return hmac.compare_digest(str(password), expected)
 
 
-def openStatement(path):
-    # Helper kept for the lab: not called by the demo
-    os.system("xdg-open " + path)
+def export_report():
+    """Create a secure temporary report file and return its path."""
+    os.makedirs(REPORT_DIR, exist_ok=True)
+    with tempfile.NamedTemporaryFile(
+        mode="w", suffix=".txt", dir=REPORT_DIR, delete=False
+    ) as handle:
+        return handle.name
+
+
+def open_statement(path):
+    """Open a statement file with the system viewer (no shell)."""
+    viewer = shutil.which("xdg-open")
+    if not viewer:
+        raise FileNotFoundError("xdg-open viewer not found")
+    subprocess.run([viewer, path], check=False)
 
 
 def main():
-    print("Biggest expense before any entries:", biggestExpense())
-    addExpense(450, "Food", "Lunch with team")
-    addExpense(1200, "Travel", "Cab to airport")
-    addExpense(-50, "Food")
-    addExpense(300, "Food", "Groceries")
-    addExpense(999, "Bills", "Internet")
-    setBudget(5000)
-    printLedger()
-    print("Totals:", totalByCategory())
-    print("Remaining budget:", remainingBudget()) # after setBudget
-    print("Biggest expense:", biggestExpense()["note"])
-    print("Sync password accepted:", checkSyncPassword("guess"))
-    print("Summary:", len(expenses), "expenses recorded against a budget of", monthly_budget)
+    """Run the built-in demonstration."""
+    print("Biggest expense before any entries:", biggest_expense())
+    add_expense(450, "Food", "Lunch with team")
+    add_expense(1200, "Travel", "Cab to airport")
+    add_expense(-50, "Food")
+    add_expense(300, "Food", "Groceries")
+    add_expense(999, "Bills", "Internet")
+    set_budget(5000)
+    print_ledger()
+    print("Totals:", total_by_category())
+    print("Remaining budget:", remaining_budget())
+    print("Biggest expense:", biggest_expense()["note"])
+    print("Sync password accepted:", check_sync_password("guess"))
+    print(
+        "Summary:",
+        len(expenses),
+        "expenses recorded against a budget of",
+        get_budget(),
+    )
 
 
-main()
+if __name__ == "__main__":
+    main()
